@@ -1,4 +1,4 @@
-FROM node:18-bullseye
+FROM node:20-bookworm
 
 # Instalar dependencias de Chrome y FFmpeg
 RUN apt-get update && apt-get install -y \
