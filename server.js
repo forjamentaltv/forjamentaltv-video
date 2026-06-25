@@ -45,13 +45,13 @@ app.post('/render', async (req, res) => {
     // Generar vídeo con FFmpeg
     console.log('Renderizando vídeo...');
     const ffmpegCmd = `ffmpeg -y \
-      -f lavfi -i color=c=0x0a0a0a:size=1920x1080:rate=30 \
+      -f lavfi -i color=c=0x0a0a0a:size=1280x720:rate=25 \
       -i "${audioPath}" \
       -vf "drawtext=text='FORJA MENTAL TV':fontcolor=0xc9a84c:fontsize=48:x=(w-text_w)/2:y=(h-text_h)/2-100:font=serif, \
            drawtext=text='${tema.replace(/'/g, '')}':fontcolor=white:fontsize=64:x=(w-text_w)/2:y=(h-text_h)/2+20:font=serif, \
            drawtext=text='Episodio ${episodio}':fontcolor=0xc9a84c:fontsize=32:x=(w-text_w)/2:y=(h-text_h)/2+120:font=serif" \
       -shortest \
-      -c:v libx264 -preset fast -crf 23 \
+      -c:v libx264 -preset ultrafast -crf 28 \
       -c:a aac -b:a 192k \
       "${outputPath}"`;
 
