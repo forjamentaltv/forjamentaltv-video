@@ -8,16 +8,15 @@ const path = require('path');
 const app = express();
 app.use(express.json());
 
+const PEXELS_KEY = 'X0Hwc4FRVXKTYxSq0rzA66R7ke6LL33EuynC6N3eTdakGWxSCG0L8r3E';
+
 function downloadFile(url, dest) {
   return new Promise((resolve, reject) => {
     const file = fs.createWriteStream(dest);
-    
     function doRequest(currentUrl) {
       const protocol = currentUrl.startsWith('https') ? https : http;
-      protocol.get(currentUrl, { 
-        headers: { 'User-Agent': 'Mozilla/5.0' }
-      }, (response) => {
-        if (response.statusCode === 301 || response.statusCode === 302 || response.statusCode === 303) {
+      protocol.get(currentUrl, { headers: { 'User-Agent': 'Mozilla/5.0' } }, (response) => {
+        if ([301, 302, 303].includes(response.statusCode)) {
           doRequest(response.headers.location);
           return;
         }
@@ -26,52 +25,170 @@ function downloadFile(url, dest) {
         file.on('error', reject);
       }).on('error', reject);
     }
-    
     doRequest(url);
   });
 }
 
+function searchPexelsVideo(query) {
+  return new Promise((resolve, reject) => {
+    const q = encodeURIComponent(query);
+    const options = {
+      hostname: 'api.pexels.com',
+      path: `/videos/search?query=${q}&per_page=3&orientation=landscape`,
+      headers: { Authorization: PEXELS_KEY }
+    };
+    https.get(options, (res) => {
+      let data = '';
+      res.on('data', chunk => data += chunk);
+      res.on('end', () => {
+        try {
+          const json = JSON.parse(data);
+          const videos = json.videos;
+          if (!videos || videos.length === 0) return resolve(null);
+          const video = videos[Math.floor(Math.random() * videos.length)];
+          const file = video.video_files.find(f => f.quality === 'hd') || video.video_files[0];
+          resolve(file.link);
+        } catch(e) { reject(e); }
+      });
+    }).on('error', reject);
+  });
+}
+
+function extractKeywords(guion) {
+  const sections = [
+    { keywords: ['water hands control', 'hands water drops'] },
+    { keywords: ['exhausted person tired', 'stress anxiety mind'] },
+    { keywords: ['ancient rome philosophy', 'seneca stoic ancient'] },
+    { keywords: ['border boundary nature', 'clarity mind meditation'] },
+    { keywords: ['letting go freedom nature', 'open hands release'] },
+    { keywords: ['calm serenity mountain', 'peace nature landscape'] },
+    { keywords: ['inner strength person', 'confidence walking path'] },
+  ];
+  return sections;
+}
+
+async function prepareVideoClips(guion, jobId, audioDuration) {
+  const sections = extractKeywords(guion);
+  const clipDuration = Math.ceil(audioDuration / sections.length);
+  const clipPaths = [];
+
+  for (let i = 0; i < sections.length; i++) {
+    const section = sections[i];
+    const keyword = section.keywords[0];
+    console.log(`Buscando vídeo para: ${keyword}`);
+    
+    try {
+      const videoUrl = await searchPexelsVideo(keyword);
+      if (!videoUrl) throw new Error('No video found');
+      
+      const rawPath = `/tmp/raw-${jobId}-${i}.mp4`;
+      const clipPath = `/tmp/clip-${jobId}-${i}.mp4`;
+      
+      await downloadFile(videoUrl, rawPath);
+      
+      await new Promise((resolve, reject) => {
+        exec(`ffmpeg -y -i "${rawPath}" -t ${clipDuration} -vf "scale=1280:720:force_original_aspect_ratio=increase,crop=1280:720" -c:v libx264 -preset ultrafast -an "${clipPath}"`, 
+          (err) => err ? reject(err) : resolve());
+      });
+      
+      fs.unlinkSync(rawPath);
+      clipPaths.push(clipPath);
+    } catch(e) {
+      console.log(`Error con vídeo ${i}, usando fondo negro`);
+      const clipPath = `/tmp/clip-${jobId}-${i}.mp4`;
+      await new Promise((resolve, reject) => {
+        exec(`ffmpeg -y -f lavfi -i color=c=0x0a0a0a:size=1280x720:rate=25 -t ${clipDuration} -c:v libx264 -preset ultrafast "${clipPath}"`,
+          (err) => err ? reject(err) : resolve());
+      });
+      clipPaths.push(clipPath);
+    }
+  }
+  return clipPaths;
+}
+
+function generateSubtitles(guion, audioDuration, outputSrt) {
+  const sentences = guion.match(/[^.!?]+[.!?]+/g) || [guion];
+  const timePerSentence = audioDuration / sentences.length;
+  
+  let srt = '';
+  sentences.forEach((sentence, i) => {
+    const start = i * timePerSentence;
+    const end = (i + 1) * timePerSentence;
+    const toTime = (s) => {
+      const h = Math.floor(s / 3600).toString().padStart(2, '0');
+      const m = Math.floor((s % 3600) / 60).toString().padStart(2, '0');
+      const sec = Math.floor(s % 60).toString().padStart(2, '0');
+      const ms = Math.floor((s % 1) * 1000).toString().padStart(3, '0');
+      return `${h}:${m}:${sec},${ms}`;
+    };
+    srt += `${i + 1}\n${toTime(start)} --> ${toTime(end)}\n${sentence.trim()}\n\n`;
+  });
+  
+  fs.writeFileSync(outputSrt, srt);
+}
+
 app.post('/render', async (req, res) => {
-  const { audioUrl, tema, episodio } = req.body;
+  const { audioUrl, guion, tema, episodio } = req.body;
   const jobId = Date.now();
   const audioPath = `/tmp/audio-${jobId}.mp3`;
+  const concatFile = `/tmp/concat-${jobId}.txt`;
+  const mergedVideo = `/tmp/merged-${jobId}.mp4`;
+  const srtPath = `/tmp/subs-${jobId}.srt`;
   const outputPath = `/tmp/video-${jobId}.mp4`;
 
   try {
-    // Descargar audio
     console.log('Descargando audio...');
     await downloadFile(audioUrl, audioPath);
 
-    // Generar vídeo con FFmpeg
-    console.log('Renderizando vídeo...');
-    const ffmpegCmd = `ffmpeg -y \
-      -f lavfi -i color=c=0x0a0a0a:size=1280x720:rate=25 \
-      -i "${audioPath}" \
-      -vf "drawtext=text='FORJA MENTAL TV':fontcolor=0xc9a84c:fontsize=48:x=(w-text_w)/2:y=(h-text_h)/2-100:font=serif, \
-           drawtext=text='${tema.replace(/'/g, '')}':fontcolor=white:fontsize=64:x=(w-text_w)/2:y=(h-text_h)/2+20:font=serif, \
-           drawtext=text='Episodio ${episodio}':fontcolor=0xc9a84c:fontsize=32:x=(w-text_w)/2:y=(h-text_h)/2+120:font=serif" \
-      -shortest \
-      -c:v libx264 -preset ultrafast -crf 28 \
-      -c:a aac -b:a 192k \
-      "${outputPath}"`;
+    // Obtener duración del audio
+    const audioDuration = await new Promise((resolve, reject) => {
+      exec(`ffprobe -i "${audioPath}" -show_entries format=duration -v quiet -of csv=p=0`, 
+        (err, stdout) => err ? reject(err) : resolve(parseFloat(stdout.trim())));
+    });
+    console.log(`Duración audio: ${audioDuration}s`);
+
+    // Preparar clips de vídeo
+    console.log('Descargando vídeos de Pexels...');
+    const clipPaths = await prepareVideoClips(guion, jobId, audioDuration);
+
+    // Concatenar clips
+    const concatContent = clipPaths.map(p => `file '${p}'`).join('\n');
+    fs.writeFileSync(concatFile, concatContent);
 
     await new Promise((resolve, reject) => {
-      exec(ffmpegCmd, (error, stdout, stderr) => {
-        if (error) reject(error);
-        else resolve();
-      });
+      exec(`ffmpeg -y -f concat -safe 0 -i "${concatFile}" -c copy "${mergedVideo}"`,
+        (err) => err ? reject(err) : resolve());
     });
 
-    // Devolver vídeo
+    // Generar subtítulos
+    generateSubtitles(guion || tema, audioDuration, srtPath);
+
+    // Mezclar vídeo + audio + subtítulos
+    console.log('Generando vídeo final...');
+    await new Promise((resolve, reject) => {
+      exec(`ffmpeg -y -i "${mergedVideo}" -i "${audioPath}" \
+        -vf "subtitles=${srtPath}:force_style='FontSize=18,PrimaryColour=&Hffffff,OutlineColour=&H000000,Outline=2,Alignment=2'" \
+        -shortest -c:v libx264 -preset ultrafast -crf 28 -c:a aac -b:a 192k "${outputPath}"`,
+        (err, stdout, stderr) => {
+          if (err) { console.error(stderr); reject(err); }
+          else resolve();
+        });
+    });
+
+    // Limpiar temporales
+    clipPaths.forEach(p => fs.existsSync(p) && fs.unlinkSync(p));
+    fs.existsSync(concatFile) && fs.unlinkSync(concatFile);
+    fs.existsSync(mergedVideo) && fs.unlinkSync(mergedVideo);
+    fs.existsSync(audioPath) && fs.unlinkSync(audioPath);
+    fs.existsSync(srtPath) && fs.unlinkSync(srtPath);
+
     console.log('Enviando vídeo...');
     res.download(outputPath, `forjamentaltv-ep${episodio}.mp4`, () => {
-      fs.unlinkSync(audioPath);
-      fs.unlinkSync(outputPath);
+      fs.existsSync(outputPath) && fs.unlinkSync(outputPath);
     });
 
   } catch (err) {
     console.error(err);
-    fs.existsSync(audioPath) && fs.unlinkSync(audioPath);
     res.status(500).json({ error: err.message });
   }
 });
