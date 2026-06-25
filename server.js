@@ -1,46 +1,74 @@
 const express = require('express');
-const { bundle } = require('@remotion/bundler');
-const { renderMedia, selectComposition } = require('@remotion/renderer');
-const path = require('path');
+const { exec } = require('child_process');
+const https = require('https');
+const http = require('http');
 const fs = require('fs');
+const path = require('path');
 
 const app = express();
 app.use(express.json());
 
+function downloadFile(url, dest) {
+  return new Promise((resolve, reject) => {
+    const file = fs.createWriteStream(dest);
+    const protocol = url.startsWith('https') ? https : http;
+    protocol.get(url, (response) => {
+      if (response.statusCode === 302 || response.statusCode === 301) {
+        downloadFile(response.headers.location, dest).then(resolve).catch(reject);
+        return;
+      }
+      response.pipe(file);
+      file.on('finish', () => file.close(resolve));
+    }).on('error', reject);
+  });
+}
+
 app.post('/render', async (req, res) => {
-  const { audioUrl, guion, tema, episodio } = req.body;
+  const { audioUrl, tema, episodio } = req.body;
+  const jobId = Date.now();
+  const audioPath = `/tmp/audio-${jobId}.mp3`;
+  const outputPath = `/tmp/video-${jobId}.mp4`;
 
   try {
-    const bundleLocation = await bundle({
-      entryPoint: path.resolve('./src/index.js'),
-      webpackOverride: (config) => config,
+    // Descargar audio
+    console.log('Descargando audio...');
+    await downloadFile(audioUrl, audioPath);
+
+    // Generar vídeo con FFmpeg
+    console.log('Renderizando vídeo...');
+    const ffmpegCmd = `ffmpeg -y \
+      -f lavfi -i color=c=0x0a0a0a:size=1920x1080:rate=30 \
+      -i "${audioPath}" \
+      -vf "drawtext=text='FORJA MENTAL TV':fontcolor=0xc9a84c:fontsize=48:x=(w-text_w)/2:y=(h-text_h)/2-100:font=serif, \
+           drawtext=text='${tema.replace(/'/g, '')}':fontcolor=white:fontsize=64:x=(w-text_w)/2:y=(h-text_h)/2+20:font=serif, \
+           drawtext=text='Episodio ${episodio}':fontcolor=0xc9a84c:fontsize=32:x=(w-text_w)/2:y=(h-text_h)/2+120:font=serif" \
+      -shortest \
+      -c:v libx264 -preset fast -crf 23 \
+      -c:a aac -b:a 192k \
+      "${outputPath}"`;
+
+    await new Promise((resolve, reject) => {
+      exec(ffmpegCmd, (error, stdout, stderr) => {
+        if (error) reject(error);
+        else resolve();
+      });
     });
 
-    const composition = await selectComposition({
-      serveUrl: bundleLocation,
-      id: 'ForjaMentalTV',
-      inputProps: { audioUrl, guion, tema, episodio },
+    // Devolver vídeo
+    console.log('Enviando vídeo...');
+    res.download(outputPath, `forjamentaltv-ep${episodio}.mp4`, () => {
+      fs.unlinkSync(audioPath);
+      fs.unlinkSync(outputPath);
     });
-
-    const outputPath = `/tmp/video-${episodio}.mp4`;
-
-    await renderMedia({
-      composition,
-      serveUrl: bundleLocation,
-      codec: 'h264',
-      outputLocation: outputPath,
-      inputProps: { audioUrl, guion, tema, episodio },
-    });
-
-    const videoBuffer = fs.readFileSync(outputPath);
-    res.set('Content-Type', 'video/mp4');
-    res.send(videoBuffer);
 
   } catch (err) {
     console.error(err);
+    fs.existsSync(audioPath) && fs.unlinkSync(audioPath);
     res.status(500).json({ error: err.message });
   }
 });
+
+app.get('/health', (req, res) => res.json({ status: 'ok' }));
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Servidor Forja Mental TV en puerto ${PORT}`));
