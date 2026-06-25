@@ -11,15 +11,23 @@ app.use(express.json());
 function downloadFile(url, dest) {
   return new Promise((resolve, reject) => {
     const file = fs.createWriteStream(dest);
-    const protocol = url.startsWith('https') ? https : http;
-    protocol.get(url, (response) => {
-      if (response.statusCode === 302 || response.statusCode === 301) {
-        downloadFile(response.headers.location, dest).then(resolve).catch(reject);
-        return;
-      }
-      response.pipe(file);
-      file.on('finish', () => file.close(resolve));
-    }).on('error', reject);
+    
+    function doRequest(currentUrl) {
+      const protocol = currentUrl.startsWith('https') ? https : http;
+      protocol.get(currentUrl, { 
+        headers: { 'User-Agent': 'Mozilla/5.0' }
+      }, (response) => {
+        if (response.statusCode === 301 || response.statusCode === 302 || response.statusCode === 303) {
+          doRequest(response.headers.location);
+          return;
+        }
+        response.pipe(file);
+        file.on('finish', () => file.close(resolve));
+        file.on('error', reject);
+      }).on('error', reject);
+    }
+    
+    doRequest(url);
   });
 }
 
