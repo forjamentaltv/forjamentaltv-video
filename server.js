@@ -525,27 +525,6 @@ app.post('/transfer-to-youtube', async (req, res) => {
 
 app.get('/health', (req, res) => res.json({ status: 'ok', version: '4.0' }));
 
-app.get('/debug-pexels', async (req, res) => {
-  const query = req.query.q || 'nature landscape';
-  const q = encodeURIComponent(query);
-  const options = {
-    hostname: 'api.pexels.com',
-    path: `/v1/search?query=${q}&per_page=3&orientation=landscape`,
-    headers: { Authorization: PEXELS_KEY }
-  };
-  https.get(options, (r) => {
-    let data = '';
-    r.on('data', chunk => data += chunk);
-    r.on('end', () => {
-      try {
-        const json = JSON.parse(data);
-        res.json({ status: r.statusCode, key_prefix: PEXELS_KEY.substring(0, 8) + '...', total_results: json.total_results, photos: (json.photos || []).length, first_url: json.photos?.[0]?.src?.large2x || null, error: json.error || null });
-      } catch(e) {
-        res.json({ status: r.statusCode, raw: data.substring(0, 500) });
-      }
-    });
-  }).on('error', e => res.status(500).json({ error: e.message }));
-});
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log('Servidor Forja Mental TV v4.0 en puerto ' + PORT));
