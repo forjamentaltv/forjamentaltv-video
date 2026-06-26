@@ -115,6 +115,13 @@ function escapeXml(str) {
   return (str || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&apos;');
 }
 
+function normalizeForSvg(str) {
+  return (str || '')
+    .replace(/á/g, 'a').replace(/é/g, 'e').replace(/í/g, 'i').replace(/ó/g, 'o').replace(/ú/g, 'u')
+    .replace(/Á/g, 'A').replace(/É/g, 'E').replace(/Í/g, 'I').replace(/Ó/g, 'O').replace(/Ú/g, 'U')
+    .replace(/ñ/g, 'n').replace(/Ñ/g, 'N').replace(/ü/g, 'u').replace(/Ü/g, 'U');
+}
+
 // ─── THUMBNAIL ENDPOINT ───────────────────────────────────────────────────────
 app.post('/generate-thumbnail', async (req, res) => {
   const { titulo, filosofo, episodio, tema, categoria } = req.body;
@@ -138,8 +145,8 @@ app.post('/generate-thumbnail', async (req, res) => {
     }
 
     // 2. Build title lines (max 18 chars per line for large font)
-    const titleLines = wrapText(titulo.toUpperCase(), 18);
-    const filosofoText = filosofo ? `— ${filosofo} —` : '';
+    const titleLines = wrapText(normalizeForSvg(titulo).toUpperCase(), 18);
+    const filosofoText = filosofo ? `— ${normalizeForSvg(filosofo)} —` : '';
 
     // 3. Calculate SVG text layout
     const W = 1280, H = 720;
