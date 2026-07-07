@@ -117,6 +117,13 @@ function escapeXml(str) {
 
 
 
+
+function normalizeForSvg(str) {
+  return (str || '')
+    .replace(/á/g, 'a').replace(/é/g, 'e').replace(/í/g, 'i').replace(/ó/g, 'o').replace(/ú/g, 'u')
+    .replace(/Á/g, 'A').replace(/É/g, 'E').replace(/Í/g, 'I').replace(/Ó/g, 'O').replace(/Ú/g, 'U')
+    .replace(/ñ/g, 'n').replace(/Ñ/g, 'N').replace(/ü/g, 'u').replace(/Ü/g, 'U');
+}
 app.post('/generate-thumbnail', async (req, res) => {
   const { titulo, filosofo, episodio, tema, categoria } = req.body;
   if (!titulo) return res.status(400).json({ error: 'titulo required' });
