@@ -115,70 +115,105 @@ function escapeXml(str) {
   return (str || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&apos;');
 }
 
-// ─── THUMBNAIL horizontal (estilo canal — texto centrado grande) ───────────────
+
+
 app.post('/generate-thumbnail', async (req, res) => {
-  const { titulo, filosofo, episodio, tema } = req.body;
+  const { titulo, filosofo, episodio, tema, categoria } = req.body;
   if (!titulo) return res.status(400).json({ error: 'titulo required' });
 
   const jobId = Date.now();
   const photoPath = `/tmp/thumb-bg-${jobId}.jpg`;
+  const svgPath = `/tmp/thumb-overlay-${jobId}.svg`;
   const outputPath = `/tmp/thumbnail-${jobId}.jpg`;
 
   try {
     const sharp = require('sharp');
-    const W = 1280, H = 720;
-    const cx = W / 2;
 
+    // 1. Get background photo from Pexels
     const photoQuery = getPhotoQueryForTema(tema || titulo, filosofo);
     console.log(`Buscando foto: ${photoQuery}`);
-    const photoUrl = await searchPexelsPhoto(photoQuery);
+    let photoUrl = await searchPexelsPhoto(photoQuery);
+    if (!photoUrl) {
+      // Fallback: dark gradient background
+      photoUrl = null;
+    }
 
-    const titleLines = wrapText(titulo.toUpperCase(), 16);
-    const fontSize = titleLines.length === 1 ? 140 : titleLines.length === 2 ? 118 : 96;
-    const lineH = fontSize * 1.22;
-    const totalH = titleLines.length * lineH;
-    const titleStartY = (H / 2) - (totalH / 2) + fontSize * 0.85;
+    // 2. Build title lines (max 18 chars per line for large font)
+    const titleLines = wrapText(normalizeForSvg(titulo).toUpperCase(), 18);
+    const filosofoText = filosofo ? `— ${normalizeForSvg(filosofo)} —` : '';
 
-    const titleSvg = titleLines.map(function(line, i) {
-      const y = titleStartY + i * lineH;
-      return `
-      <text x="${cx}" y="${y + 6}" text-anchor="middle" font-family="Arial Black,Arial" font-size="${fontSize}" font-weight="900" fill="black" opacity="0.6">${escapeXml(line)}</text>
-      <text x="${cx}" y="${y}" text-anchor="middle" font-family="Arial Black,Arial" font-size="${fontSize}" font-weight="900" fill="white" stroke="#000000" stroke-width="8" paint-order="stroke">${escapeXml(line)}</text>`;
-    }).join('');
+    // 3. Calculate SVG text layout
+    const W = 1280, H = 720;
+    const titleFontSize = titleLines.length > 2 ? 78 : 88;
+    const lineHeight = titleFontSize * 1.15;
+    const totalTitleHeight = titleLines.length * lineHeight;
+    const titleStartY = (H / 2) - (totalTitleHeight / 2) + 20;
+
+    const titleSvgLines = titleLines.map((line, i) => {
+      const y = titleStartY + i * lineHeight;
+      return `<text x="${W/2}" y="${y}" text-anchor="middle" font-family="Arial Black, Arial" font-size="${titleFontSize}" font-weight="900" fill="white" stroke="black" stroke-width="3" paint-order="stroke">${escapeXml(line)}</text>`;
+    }).join('\n');
+
+    const filosofoY = titleStartY + totalTitleHeight + 50;
+    const epText = episodio ? `EP. ${episodio}` : '';
 
     const svg = `<svg width="${W}" height="${H}" xmlns="http://www.w3.org/2000/svg">
   <defs>
-    <linearGradient id="gv" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%"   stop-color="#000" stop-opacity="0.55"/>
-      <stop offset="30%"  stop-color="#000" stop-opacity="0.15"/>
-      <stop offset="70%"  stop-color="#000" stop-opacity="0.15"/>
-      <stop offset="100%" stop-color="#000" stop-opacity="0.70"/>
+    <linearGradient id="grad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#000000" stop-opacity="0.25"/>
+      <stop offset="45%" stop-color="#000000" stop-opacity="0.55"/>
+      <stop offset="100%" stop-color="#000000" stop-opacity="0.80"/>
     </linearGradient>
   </defs>
-  <rect width="${W}" height="${H}" fill="url(#gv)"/>
-  ${titleSvg}
-  <text x="${cx}" y="${H - 28}" text-anchor="middle" font-family="Arial Black,Arial" font-size="22" font-weight="900" fill="#c9a84c" letter-spacing="7" opacity="0.95">FORJA MENTAL TV</text>
+  <rect width="${W}" height="${H}" fill="url(#grad)"/>
+  ${epText ? `<text x="64" y="68" font-family="Arial" font-size="28" font-weight="bold" fill="#c9a84c" letter-spacing="4">${escapeXml(epText)}</text>` : ''}
+  <line x1="${W/2 - 120}" y1="${titleStartY - 36}" x2="${W/2 + 120}" y2="${titleStartY - 36}" stroke="#c9a84c" stroke-width="2" opacity="0.8"/>
+  ${titleSvgLines}
+  ${filosofoText ? `<text x="${W/2}" y="${filosofoY}" text-anchor="middle" font-family="Arial" font-size="38" fill="#c9a84c" letter-spacing="2">${escapeXml(filosofoText)}</text>` : ''}
+  <text x="${W/2}" y="${H - 38}" text-anchor="middle" font-family="Arial" font-size="22" font-weight="bold" fill="#c9a84c" letter-spacing="6" opacity="0.9">FORJA MENTAL TV</text>
+  <line x1="${W/2 - 180}" y1="${H - 58}" x2="${W/2 + 180}" y2="${H - 58}" stroke="#c9a84c" stroke-width="1" opacity="0.5"/>
 </svg>`;
 
+    fs.writeFileSync(svgPath, svg);
+
+    let finalImage;
     if (photoUrl) {
       await downloadFile(photoUrl, photoPath);
-      const bgBuf = await sharp(photoPath).resize(W, H, { fit: 'cover', position: 'centre' }).jpeg({ quality: 90 }).toBuffer();
-      await sharp(bgBuf).composite([{ input: Buffer.from(svg), top: 0, left: 0 }]).jpeg({ quality: 93 }).toFile(outputPath);
+      const bgBuffer = await sharp(photoPath)
+        .resize(W, H, { fit: 'cover', position: 'centre' })
+        .jpeg({ quality: 90 })
+        .toBuffer();
+      const overlayBuffer = Buffer.from(svg);
+      finalImage = await sharp(bgBuffer)
+        .composite([{ input: overlayBuffer, top: 0, left: 0 }])
+        .jpeg({ quality: 92 })
+        .toFile(outputPath);
       fs.existsSync(photoPath) && fs.unlinkSync(photoPath);
     } else {
-      await sharp({ create: { width: W, height: H, channels: 3, background: { r: 10, g: 10, b: 10 } } })
-        .composite([{ input: Buffer.from(svg), top: 0, left: 0 }]).jpeg({ quality: 93 }).toFile(outputPath);
+      // Dark gradient fallback
+      await sharp({
+        create: { width: W, height: H, channels: 3, background: { r: 10, g: 10, b: 10 } }
+      })
+        .composite([{ input: Buffer.from(svg), top: 0, left: 0 }])
+        .jpeg({ quality: 92 })
+        .toFile(outputPath);
     }
 
-    console.log(`Thumbnail generada: ${titulo}`);
-    res.download(outputPath, `thumbnail-ep${episodio || jobId}.jpg`, () => { fs.existsSync(outputPath) && fs.unlinkSync(outputPath); });
+    fs.existsSync(svgPath) && fs.unlinkSync(svgPath);
+    console.log(`Thumbnail generada para: ${titulo}`);
+
+    res.download(outputPath, `thumbnail-ep${episodio || jobId}.jpg`, () => {
+      fs.existsSync(outputPath) && fs.unlinkSync(outputPath);
+    });
 
   } catch (err) {
     console.error(err);
-    [photoPath, outputPath].forEach(p => fs.existsSync(p) && fs.unlinkSync(p));
+    [photoPath, svgPath, outputPath].forEach(p => fs.existsSync(p) && fs.unlinkSync(p));
     res.status(500).json({ error: err.message });
   }
 });
+
+
 
 function extractKeywords(guion) {
   const sections = [
