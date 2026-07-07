@@ -418,7 +418,95 @@ app.post('/transfer-to-youtube', async (req, res) => {
   }
 });
 
-app.get('/health', (req, res) => res.json({ status: 'ok', version: '4.1-thumbnail-v2' }));
+// ─── THUMBNAIL VERTICAL (Shorts / TikTok / Instagram) ────────────────────────
+app.post('/generate-thumbnail-vertical', async (req, res) => {
+  const { titulo } = req.body;
+  if (!titulo) return res.status(400).json({ error: 'titulo required' });
+
+  const jobId = Date.now();
+  const photoPath = `/tmp/vthumb-bg-${jobId}.jpg`;
+  const outputPath = `/tmp/vthumbnail-${jobId}.jpg`;
+
+  try {
+    const sharp = require('sharp');
+    const W = 1080, H = 1920;
+
+    // Portrait photo from Pexels
+    const photoQuery = getPhotoQueryForTema(titulo, '');
+    const photoUrl = await new Promise((resolve, reject) => {
+      const q = encodeURIComponent(photoQuery);
+      const options = { hostname: 'api.pexels.com', path: `/v1/search?query=${q}&per_page=8&orientation=portrait`, headers: { Authorization: PEXELS_KEY } };
+      https.get(options, (r) => {
+        let data = '';
+        r.on('data', chunk => data += chunk);
+        r.on('end', () => {
+          try {
+            const json = JSON.parse(data);
+            const photos = json.photos;
+            if (!photos || photos.length === 0) return resolve(null);
+            const photo = photos[Math.floor(Math.random() * Math.min(photos.length, 5))];
+            resolve(photo.src.portrait || photo.src.large2x || photo.src.large);
+          } catch(e) { reject(e); }
+        });
+      }).on('error', reject);
+    });
+
+    const titleUpper = titulo.toUpperCase();
+    const titleLines = wrapText(titleUpper, 16);
+    const fontSize = titleLines.length <= 2 ? 108 : titleLines.length === 3 ? 88 : 72;
+    const lineH = fontSize * 1.28;
+    const totalH = titleLines.length * lineH;
+    const cx = W / 2;
+    const titleStartY = (H / 2) - (totalH / 2) + fontSize * 0.85;
+
+    const titleSvg = titleLines.map((line, i) => {
+      const y = titleStartY + i * lineH;
+      return `
+      <text x="${cx}" y="${y + 6}" text-anchor="middle" font-family="Arial Black,Arial" font-size="${fontSize}" font-weight="900" fill="black" opacity="0.5">${escapeXml(line)}</text>
+      <text x="${cx}" y="${y}" text-anchor="middle" font-family="Arial Black,Arial" font-size="${fontSize}" font-weight="900" fill="white" stroke="#000000" stroke-width="9" paint-order="stroke">${escapeXml(line)}</text>`;
+    }).join('');
+
+    const lineTop = titleStartY - fontSize * 0.55;
+    const lineBot = titleStartY + totalH + 12;
+
+    const svg = `<svg width="${W}" height="${H}" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="gt" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%"   stop-color="#000" stop-opacity="0.75"/>
+      <stop offset="25%"  stop-color="#000" stop-opacity="0.10"/>
+      <stop offset="65%"  stop-color="#000" stop-opacity="0.10"/>
+      <stop offset="100%" stop-color="#000" stop-opacity="0.88"/>
+    </linearGradient>
+  </defs>
+  <rect width="${W}" height="${H}" fill="url(#gt)"/>
+  <line x1="${cx - 220}" y1="${lineTop}" x2="${cx + 220}" y2="${lineTop}" stroke="#c9a84c" stroke-width="4"/>
+  ${titleSvg}
+  <line x1="${cx - 220}" y1="${lineBot}" x2="${cx + 220}" y2="${lineBot}" stroke="#c9a84c" stroke-width="4"/>
+  <line x1="${cx - 240}" y1="${H - 130}" x2="${cx + 240}" y2="${H - 130}" stroke="#c9a84c" stroke-width="2" opacity="0.5"/>
+  <text x="${cx}" y="${H - 80}" text-anchor="middle" font-family="Arial Black,Arial" font-size="44" font-weight="900" fill="#c9a84c" letter-spacing="8" opacity="0.95">FORJA MENTAL TV</text>
+</svg>`;
+
+    if (photoUrl) {
+      await downloadFile(photoUrl, photoPath);
+      const bgBuf = await sharp(photoPath).resize(W, H, { fit: 'cover', position: 'centre' }).jpeg({ quality: 90 }).toBuffer();
+      await sharp(bgBuf).composite([{ input: Buffer.from(svg), top: 0, left: 0 }]).jpeg({ quality: 93 }).toFile(outputPath);
+      fs.existsSync(photoPath) && fs.unlinkSync(photoPath);
+    } else {
+      await sharp({ create: { width: W, height: H, channels: 3, background: { r: 10, g: 10, b: 10 } } })
+        .composite([{ input: Buffer.from(svg), top: 0, left: 0 }]).jpeg({ quality: 93 }).toFile(outputPath);
+    }
+
+    console.log(`Thumbnail vertical generada: ${titulo}`);
+    res.download(outputPath, `thumbnail-vertical-${jobId}.jpg`, () => { fs.existsSync(outputPath) && fs.unlinkSync(outputPath); });
+  } catch (err) {
+    console.error(err);
+    [photoPath, outputPath].forEach(p => fs.existsSync(p) && fs.unlinkSync(p));
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/health', (req, res) => res.json({ status: 'ok', version: '4.2-vertical-thumbnail' }));
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log('Servidor Forja Mental TV v4.1 en puerto ' + PORT));
+
