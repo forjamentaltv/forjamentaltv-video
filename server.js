@@ -115,9 +115,9 @@ function escapeXml(str) {
   return (str || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&apos;');
 }
 
-// ─── THUMBNAIL v2 ─────────────────────────────────────────────────────────────
+// ─── THUMBNAIL horizontal (estilo canal — texto centrado grande) ───────────────
 app.post('/generate-thumbnail', async (req, res) => {
-  const { titulo, filosofo, episodio, tema, categoria } = req.body;
+  const { titulo, filosofo, episodio, tema } = req.body;
   if (!titulo) return res.status(400).json({ error: 'titulo required' });
 
   const jobId = Date.now();
@@ -127,74 +127,37 @@ app.post('/generate-thumbnail', async (req, res) => {
   try {
     const sharp = require('sharp');
     const W = 1280, H = 720;
+    const cx = W / 2;
 
-    // 1. Background photo — dramatic Pexels query
     const photoQuery = getPhotoQueryForTema(tema || titulo, filosofo);
     console.log(`Buscando foto: ${photoQuery}`);
     const photoUrl = await searchPexelsPhoto(photoQuery);
 
-    // 2. Title: keep accents, left-aligned, wrap at 13 chars
-    const titleLines = wrapText(titulo, 13);
-    const epText = episodio ? `EP. ${episodio}` : '';
-    const filosofoText = filosofo ? `\u2014 ${filosofo} \u2014` : '';
-
-    // Font size based on number of lines
-    const fontSize = titleLines.length === 1 ? 102 : titleLines.length === 2 ? 88 : 74;
+    const titleLines = wrapText(titulo.toUpperCase(), 16);
+    const fontSize = titleLines.length === 1 ? 140 : titleLines.length === 2 ? 118 : 96;
     const lineH = fontSize * 1.22;
     const totalH = titleLines.length * lineH;
-    const titleStartY = (H / 2) - (totalH / 2) + fontSize * 0.1;
+    const titleStartY = (H / 2) - (totalH / 2) + fontSize * 0.85;
 
-    // Title SVG — shadow layer + main layer for depth
-    const titleSvg = titleLines.map((line, i) => {
+    const titleSvg = titleLines.map(function(line, i) {
       const y = titleStartY + i * lineH;
       return `
-      <text x="54" y="${y + 5}" font-family="Arial Black,Arial" font-size="${fontSize}" font-weight="900" fill="black" opacity="0.55">${escapeXml(line)}</text>
-      <text x="52" y="${y}" font-family="Arial Black,Arial" font-size="${fontSize}" font-weight="900" fill="white" stroke="#000000" stroke-width="6" paint-order="stroke">${escapeXml(line)}</text>`;
+      <text x="${cx}" y="${y + 6}" text-anchor="middle" font-family="Arial Black,Arial" font-size="${fontSize}" font-weight="900" fill="black" opacity="0.6">${escapeXml(line)}</text>
+      <text x="${cx}" y="${y}" text-anchor="middle" font-family="Arial Black,Arial" font-size="${fontSize}" font-weight="900" fill="white" stroke="#000000" stroke-width="8" paint-order="stroke">${escapeXml(line)}</text>`;
     }).join('');
-
-    const filosofoY = titleStartY + totalH + 52;
-    const lineAboveY = titleStartY - 32;
-    const lineWidth = Math.min(320, 80 + titleLines[0].length * 18);
 
     const svg = `<svg width="${W}" height="${H}" xmlns="http://www.w3.org/2000/svg">
   <defs>
-    <linearGradient id="g1" x1="0" y1="0" x2="1" y2="0">
-      <stop offset="0%"   stop-color="#000" stop-opacity="0.97"/>
-      <stop offset="45%"  stop-color="#000" stop-opacity="0.80"/>
-      <stop offset="72%"  stop-color="#000" stop-opacity="0.35"/>
-      <stop offset="100%" stop-color="#000" stop-opacity="0.04"/>
-    </linearGradient>
-    <linearGradient id="g2" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%"  stop-color="#000" stop-opacity="0.65"/>
-      <stop offset="22%" stop-color="#000" stop-opacity="0.0"/>
-    </linearGradient>
-    <linearGradient id="g3" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="70%"  stop-color="#000" stop-opacity="0.0"/>
-      <stop offset="100%" stop-color="#000" stop-opacity="0.82"/>
+    <linearGradient id="gv" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%"   stop-color="#000" stop-opacity="0.55"/>
+      <stop offset="30%"  stop-color="#000" stop-opacity="0.15"/>
+      <stop offset="70%"  stop-color="#000" stop-opacity="0.15"/>
+      <stop offset="100%" stop-color="#000" stop-opacity="0.70"/>
     </linearGradient>
   </defs>
-
-  <rect width="${W}" height="${H}" fill="url(#g1)"/>
-  <rect width="${W}" height="${H}" fill="url(#g2)"/>
-  <rect width="${W}" height="${H}" fill="url(#g3)"/>
-
-  <!-- Gold accent bar -->
-  <rect x="0" y="0" width="11" height="${H}" fill="#c9a84c"/>
-
-  <!-- EP number -->
-  ${epText ? `<text x="30" y="62" font-family='Arial Black,Arial' font-size="26" font-weight="900" fill="#c9a84c" letter-spacing="5">${escapeXml(epText)}</text>` : ''}
-
-  <!-- Gold line above title -->
-  <line x1="30" y1="${lineAboveY}" x2="${lineWidth}" y2="${lineAboveY}" stroke="#c9a84c" stroke-width="3.5"/>
-
+  <rect width="${W}" height="${H}" fill="url(#gv)"/>
   ${titleSvg}
-
-  <!-- Philosopher -->
-  ${filosofoText ? `<text x="52" y="${filosofoY}" font-family="Arial,sans-serif" font-size="38" fill="#c9a84c" letter-spacing="2" opacity="0.95">${escapeXml(filosofoText)}</text>` : ''}
-
-  <!-- Brand bottom -->
-  <line x1="30" y1="${H - 55}" x2="270" y2="${H - 55}" stroke="#c9a84c" stroke-width="1.5" opacity="0.55"/>
-  <text x="30" y="${H - 28}" font-family="Arial Black,Arial" font-size="21" font-weight="900" fill="#c9a84c" letter-spacing="6" opacity="0.92">FORJA MENTAL TV</text>
+  <text x="${cx}" y="${H - 28}" text-anchor="middle" font-family="Arial Black,Arial" font-size="22" font-weight="900" fill="#c9a84c" letter-spacing="7" opacity="0.95">FORJA MENTAL TV</text>
 </svg>`;
 
     if (photoUrl) {
@@ -207,7 +170,7 @@ app.post('/generate-thumbnail', async (req, res) => {
         .composite([{ input: Buffer.from(svg), top: 0, left: 0 }]).jpeg({ quality: 93 }).toFile(outputPath);
     }
 
-    console.log(`Thumbnail v2 generada: ${titulo}`);
+    console.log(`Thumbnail generada: ${titulo}`);
     res.download(outputPath, `thumbnail-ep${episodio || jobId}.jpg`, () => { fs.existsSync(outputPath) && fs.unlinkSync(outputPath); });
 
   } catch (err) {
