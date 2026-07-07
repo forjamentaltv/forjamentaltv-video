@@ -160,7 +160,9 @@ app.post('/generate-thumbnail', async (req, res) => {
     </linearGradient>
   </defs>
   <rect width="${W}" height="${H}" fill="url(#grad)"/>
+  <line x1="${cx - 120}" y1="${titleStartY - 36}" x2="${cx + 120}" y2="${titleStartY - 36}" stroke="#c9a84c" stroke-width="2" opacity="0.8"/>
   ${titleSvg}
+  <line x1="${cx - 180}" y1="${H - 58}" x2="${cx + 180}" y2="${H - 58}" stroke="#c9a84c" stroke-width="1" opacity="0.5"/>
   <text x="${cx}" y="${H - 32}" text-anchor="middle" font-family="Arial Black,Arial" font-size="22" font-weight="bold" fill="#c9a84c" letter-spacing="6" opacity="0.9">FORJA MENTAL TV</text>
 </svg>`;
 
