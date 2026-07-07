@@ -455,12 +455,22 @@ app.post('/generate-thumbnail-vertical', async (req, res) => {
   <text x="${cx}" y="${H - 80}" text-anchor="middle" font-family="Arial Black,Arial" font-size="44" font-weight="900" fill="#c9a84c" letter-spacing="8" opacity="0.95">FORJA MENTAL TV</text>
 </svg>`;
 
+    let usedPhoto = false;
     if (photoUrl) {
-      await downloadFile(photoUrl, photoPath);
-      const bgBuf = await sharp(photoPath).resize(W, H, { fit: 'cover', position: 'centre' }).jpeg({ quality: 90 }).toBuffer();
-      await sharp(bgBuf).composite([{ input: Buffer.from(svg), top: 0, left: 0 }]).jpeg({ quality: 93 }).toFile(outputPath);
-      fs.existsSync(photoPath) && fs.unlinkSync(photoPath);
-    } else {
+      try {
+        await downloadFile(photoUrl, photoPath);
+        if (fs.existsSync(photoPath)) {
+          const bgBuf = await sharp(photoPath).resize(W, H, { fit: 'cover', position: 'centre' }).jpeg({ quality: 90 }).toBuffer();
+          await sharp(bgBuf).composite([{ input: Buffer.from(svg), top: 0, left: 0 }]).jpeg({ quality: 93 }).toFile(outputPath);
+          fs.existsSync(photoPath) && fs.unlinkSync(photoPath);
+          usedPhoto = true;
+        }
+      } catch(e) {
+        console.error('Photo download failed, using dark bg:', e.message);
+        fs.existsSync(photoPath) && fs.unlinkSync(photoPath);
+      }
+    }
+    if (!usedPhoto) {
       await sharp({ create: { width: W, height: H, channels: 3, background: { r: 10, g: 10, b: 10 } } })
         .composite([{ input: Buffer.from(svg), top: 0, left: 0 }]).jpeg({ quality: 93 }).toFile(outputPath);
     }
