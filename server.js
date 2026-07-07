@@ -12,15 +12,16 @@ const PEXELS_KEY = process.env.PEXELS_KEY || '';
 
 function downloadFile(url, dest) {
   return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('downloadFile timeout')), 10000);
     const file = fs.createWriteStream(dest);
     function doRequest(currentUrl) {
       const protocol = currentUrl.startsWith('https') ? https : http;
       protocol.get(currentUrl, { headers: { 'User-Agent': 'Mozilla/5.0' } }, (response) => {
         if ([301, 302, 303].includes(response.statusCode)) { doRequest(response.headers.location); return; }
         response.pipe(file);
-        file.on('finish', () => file.close(resolve));
-        file.on('error', reject);
-      }).on('error', reject);
+        file.on('finish', () => { clearTimeout(timer); file.close(resolve); });
+        file.on('error', (e) => { clearTimeout(timer); reject(e); });
+      }).on('error', (e) => { clearTimeout(timer); reject(e); });
     }
     doRequest(url);
   });
